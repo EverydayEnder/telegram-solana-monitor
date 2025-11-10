@@ -1,4 +1,5 @@
 from telethon import TelegramClient, events
+from telethon.sessions import StringSession
 import requests
 import re
 import os
@@ -8,6 +9,7 @@ from aiohttp import web
 # Configuration from environment variables
 API_ID = int(os.getenv('TG_API_ID', '0'))
 API_HASH = os.getenv('TG_API_HASH', '')
+SESSION_STRING = os.getenv('TG_SESSION_STRING', '')
 PHONE = os.getenv('TG_PHONE', '')
 CHANNEL = os.getenv('TG_CHANNEL', '')
 N8N_WEBHOOK = os.getenv('N8N_WEBHOOK', '')
@@ -35,8 +37,11 @@ async def start_health_server():
     print(f"✓ Health check server running on port {HEALTH_PORT}")
 
 # Initialize Telegram client
-client = TelegramClient('/data/monitor_session', API_ID, API_HASH)
-
+if SESSION_STRING:
+    client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+else:
+    client = TelegramClient('/data/monitor_session', API_ID, API_HASH)
+    
 @client.on(events.NewMessage(chats=CHANNEL))
 async def handler(event):
     """Handle new messages from monitored channel"""
@@ -73,14 +78,13 @@ async def main():
     print("=" * 50)
     
     # Validate environment variables
-    if not all([API_ID, API_HASH, PHONE, CHANNEL, N8N_WEBHOOK]):
+    if not all([API_ID, API_HASH, CHANNEL, N8N_WEBHOOK]):
         print("✗ ERROR: Missing required environment variables")
-        print("Required: TG_API_ID, TG_API_HASH, TG_PHONE, TG_CHANNEL, N8N_WEBHOOK")
+        print("Required: TG_API_ID, TG_API_HASH, TG_CHANNEL, N8N_WEBHOOK")
+        print("Optional: TG_SESSION_STRING (recommended) or TG_PHONE (requires interactive auth)")
         health_status['status'] = 'error'
         health_status['connected'] = False
-        # Still start health server for Coolify
         await start_health_server()
-        # Keep container running so you can see logs
         await asyncio.Event().wait()
         return
     
@@ -89,7 +93,13 @@ async def main():
     
     try:
         # Start Telegram client
-        await client.start(phone=PHONE)
+        if SESSION_STRING:
+            print("✓ Using session string authentication")
+            await client.connect()
+        else:
+            print("⚠ Using interactive authentication (requires phone)")
+            await client.start(phone=PHONE)
+        
         health_status['connected'] = True
         health_status['status'] = 'connected'
         
@@ -106,7 +116,6 @@ async def main():
         print(f"✗ Fatal error: {e}")
         health_status['status'] = 'error'
         health_status['connected'] = False
-        # Keep health server running for debugging
         await asyncio.Event().wait()
 
 if __name__ == '__main__':
