@@ -11,9 +11,12 @@ API_ID = int(os.getenv('TG_API_ID', '0'))
 API_HASH = os.getenv('TG_API_HASH', '')
 SESSION_STRING = os.getenv('TG_SESSION_STRING', '')
 PHONE = os.getenv('TG_PHONE', '')
-CHANNEL = os.getenv('TG_CHANNEL', '')
+CHANNELS = os.getenv('TG_CHANNEL', '').split(',')  # Split by comma
 N8N_WEBHOOK = os.getenv('N8N_WEBHOOK', '')
 HEALTH_PORT = int(os.getenv('HEALTH_PORT', '8000'))
+
+# Clean up channel names (remove spaces, ensure no @ prefix)
+CHANNELS = [ch.strip().lstrip('@') for ch in CHANNELS if ch.strip()]
 
 # Global health status
 health_status = {'status': 'starting', 'last_message': None, 'connected': False}
@@ -41,11 +44,18 @@ if SESSION_STRING:
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
 else:
     client = TelegramClient('/data/monitor_session', API_ID, API_HASH)
-    
-@client.on(events.NewMessage(chats=CHANNEL))
+
+@client.on(events.NewMessage(chats=CHANNELS))  # Now it's a list
 async def handler(event):
-    """Handle new messages from monitored channel"""
+    """Handle new messages from monitored channels"""
     message = event.message.message
+    
+    # Get channel name
+    try:
+        chat = await event.get_chat()
+        channel_name = chat.username or str(chat.id)
+    except:
+        channel_name = 'unknown'
     
     # Update health status
     health_status['last_message'] = event.date.isoformat()
@@ -60,12 +70,12 @@ async def handler(event):
                 'contractAddress': address,
                 'sourceMessage': message,
                 'timestamp': event.date.isoformat(),
-                'channel': CHANNEL
+                'channel': channel_name
             }
             
             try:
                 response = requests.post(N8N_WEBHOOK, json=payload, timeout=10)
-                print(f"✓ Forwarded {address} to n8n (Status: {response.status_code})")
+                print(f"✓ Forwarded {address} from @{channel_name} to n8n (Status: {response.status_code})")
             except requests.exceptions.RequestException as e:
                 print(f"✗ Error forwarding to n8n: {e}")
             except Exception as e:
@@ -78,7 +88,7 @@ async def main():
     print("=" * 50)
     
     # Validate environment variables
-    if not all([API_ID, API_HASH, CHANNEL, N8N_WEBHOOK]):
+    if not all([API_ID, API_HASH, CHANNELS, N8N_WEBHOOK]):
         print("✗ ERROR: Missing required environment variables")
         print("Required: TG_API_ID, TG_API_HASH, TG_CHANNEL, N8N_WEBHOOK")
         print("Optional: TG_SESSION_STRING (recommended) or TG_PHONE (requires interactive auth)")
@@ -104,7 +114,9 @@ async def main():
         health_status['status'] = 'connected'
         
         print(f"✓ Connected to Telegram")
-        print(f"✓ Monitoring channel: @{CHANNEL}")
+        print(f"✓ Monitoring {len(CHANNELS)} channels:")
+        for ch in CHANNELS:
+            print(f"   - @{ch}")
         print(f"✓ Webhook: {N8N_WEBHOOK}")
         print("✓ Waiting for messages...")
         print("=" * 50)
